@@ -108,4 +108,4 @@ with st.expander('Model Details'):
     - **N (modeled):** ~220,000 non-zero county-month observations  
     - **Features:** Mean temperature, precipitation, month, year, population  
     - **Limitation:** Model excludes CDC-suppressed counties (small populations)
-    """
+    """)
