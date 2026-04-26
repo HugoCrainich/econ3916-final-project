@@ -1,112 +1,153 @@
 import streamlit as st
-import pandas as pd
 import numpy as np
-import joblib
-import matplotlib.pyplot as plt
+import pandas as pd
 
-# ── Page config ──────────────────────────────────────────────
-st.set_page_config(page_title='County Suicide Rate Predictor', layout='wide')
+# ── Page config ──────────────────────────────────────────────────────────────
+st.set_page_config(
+    page_title="Suicide Rate Predictor",
+    page_icon="📊",
+    layout="wide",
+)
 
-st.title('🌡️ County-Level Suicide Rate Predictor')
-st.markdown("""
-This app uses a **Random Forest model** (CV R² = 0.84 ± 0.01) trained on U.S. county-level 
-climate and demographic data (1968–2004) to predict age-adjusted suicide rates.  
-**Predictive tool only — does not imply causal relationships.**
-""")
-
-# ── Load model ───────────────────────────────────────────────
+# ── Load model (with graceful error handling) ─────────────────────────────────
 @st.cache_resource
 def load_model():
-    return joblib.load('model.pkl')
+    try:
+        import joblib
+        return joblib.load("model.pkl"), None
+    except FileNotFoundError:
+        return None, "**model.pkl not found.** Place the file in the same directory as app.py and restart."
+    except Exception as e:
+        return None, f"**Error loading model.pkl:** {e}"
 
-model = load_model()
+model, load_error = load_model()
 
-# ── Sidebar inputs ───────────────────────────────────────────
-st.sidebar.header('County Input Parameters')
+# ── Constants ─────────────────────────────────────────────────────────────────
+RMSE = 2.14          # cross-validated RMSE used as uncertainty proxy
+TEMP_MIN, TEMP_MAX   = -20, 35
+PRECIP_MIN, PRECIP_MAX = 0, 500
+YEAR_MIN, YEAR_MAX   = 1968, 2004
+POP_MIN, POP_MAX     = 1_000, 10_000_000
+MONTH_NAMES = {
+    1:"Jan", 2:"Feb", 3:"Mar", 4:"Apr", 5:"May", 6:"Jun",
+    7:"Jul", 8:"Aug", 9:"Sep", 10:"Oct", 11:"Nov", 12:"Dec",
+}
 
-tmean = st.sidebar.slider(
-    'Mean Monthly Temperature (°C)', 
-    min_value=-20.0, max_value=35.0, value=12.0, step=0.5
+# ── Sidebar inputs ────────────────────────────────────────────────────────────
+st.sidebar.header("🎛️ Input Parameters")
+
+temperature = st.sidebar.slider(
+    "Mean Monthly Temperature (°C)",
+    min_value=TEMP_MIN, max_value=TEMP_MAX, value=15, step=1,
 )
-prec = st.sidebar.slider(
-    'Monthly Precipitation (mm)', 
-    min_value=0.0, max_value=500.0, value=80.0, step=5.0
+
+precipitation = st.sidebar.slider(
+    "Monthly Precipitation (mm)",
+    min_value=PRECIP_MIN, max_value=PRECIP_MAX, value=80, step=5,
 )
+
 month = st.sidebar.selectbox(
-    'Month', options=list(range(1, 13)),
-    format_func=lambda x: ['Jan','Feb','Mar','Apr','May','Jun',
-                            'Jul','Aug','Sep','Oct','Nov','Dec'][x-1]
+    "Month",
+    options=list(MONTH_NAMES.keys()),
+    format_func=lambda m: f"{m} – {MONTH_NAMES[m]}",
+    index=5,  # default: June
 )
+
 year = st.sidebar.slider(
-    'Year', min_value=1968, max_value=2004, value=1990
-)
-pop = st.sidebar.number_input(
-    'County Population', min_value=1000, max_value=10000000, 
-    value=50000, step=1000
+    "Year",
+    min_value=YEAR_MIN, max_value=YEAR_MAX, value=1986, step=1,
 )
 
-# ── Prediction ───────────────────────────────────────────────
-input_df = pd.DataFrame({
-    'tmean': [tmean], 'prec': [prec],
-    'month': [month], 'year':  [year], 'pop': [pop]
-})
+population = st.sidebar.slider(
+    "County Population",
+    min_value=POP_MIN, max_value=POP_MAX, value=500_000, step=10_000,
+    format="%d",
+)
 
-prediction = model.predict(input_df)[0]
-prediction = max(0, prediction)  # rates can't be negative
+# ── Helper: single prediction with clamped uncertainty ───────────────────────
+def predict(temp, precip, mo, yr, pop):
+    """Return (point, lower, upper) — lower is clamped at 0."""
+    X = np.array([[temp, precip, mo, yr, pop]], dtype=float)
+    point = float(model.predict(X)[0])
+    lower = max(0.0, point - RMSE)
+    upper = point + RMSE
+    return point, lower, upper
 
-CV_RMSE      = 2.1398
-CV_RMSE_STD  = 0.0987
-uncertainty  = CV_RMSE + CV_RMSE_STD   # ← this line is probably missing
+# ── Main content ──────────────────────────────────────────────────────────────
+st.title("Age-Adjusted Suicide Rate Predictor")
+st.markdown(
+    "Predicts the **age-adjusted suicide rate per 100,000 people** from climate and "
+    "demographic inputs using a Random Forest regression model "
+    f"(CV R² = 0.84 · CV RMSE = {RMSE} ± 0.10)."
+)
 
-lower = max(0, prediction - uncertainty)
-upper = prediction + uncertainty
+if load_error:
+    st.error(load_error)
+    st.stop()
 
-# ── Metrics row ──────────────────────────────────────────────
-st.subheader('Predicted Age-Adjusted Suicide Rate (per 100,000)')
+# ── Point estimate card ───────────────────────────────────────────────────────
+point, lower, upper = predict(temperature, precipitation, month, year, population)
+
 col1, col2, col3 = st.columns(3)
-col1.metric('Point Estimate',    f'{prediction:.2f}')
-col2.metric('Lower Bound (−1σ)', f'{lower:.2f}')
-col3.metric('Upper Bound (+1σ)', f'{upper:.2f}')
+col1.metric(
+    label="⬇️ Lower Bound (−1 RMSE)",
+    value=f"{lower:.2f}",
+    help="Point estimate minus one RMSE; floored at 0",
+)
+col2.metric(
+    label="📍 Predicted Rate",
+    value=f"{point:.2f}",
+    help="Model point estimate (per 100,000)",
+)
+col3.metric(
+    label="⬆️ Upper Bound (+1 RMSE)",
+    value=f"{upper:.2f}",
+    help="Point estimate plus one RMSE",
+)
 
-st.caption(f'Uncertainty based on CV RMSE = {CV_RMSE:.2f} ± {CV_RMSE_STD:.2f}')
+st.markdown("---")
 
-# ── Visualization: sweep temperature ─────────────────────────
-st.subheader('How Predicted Rate Changes Across Temperatures')
-st.markdown('All other inputs held at sidebar values.')
+# ── Temperature sweep chart ───────────────────────────────────────────────────
+# Rebuilds completely on every sidebar change because all inputs feed into it.
+st.subheader("📈 Predicted Rate Across Full Temperature Range")
+st.caption(
+    f"Other inputs held fixed — Precip: **{precipitation} mm** · "
+    f"Month: **{MONTH_NAMES[month]}** · Year: **{year}** · "
+    f"Population: **{population:,}**"
+)
 
-temp_range = np.linspace(-20, 35, 100)
-sweep_df   = pd.DataFrame({
-    'tmean': temp_range,
-    'prec':  prec,
-    'month': month,
-    'year':  year,
-    'pop':   pop
-})
-sweep_preds = np.maximum(0, model.predict(sweep_df))
+temp_sweep = np.arange(TEMP_MIN, TEMP_MAX + 1, 1)
+sweep_results = [predict(t, precipitation, month, year, population) for t in temp_sweep]
+points  = [r[0] for r in sweep_results]
+lowers  = [r[1] for r in sweep_results]
+uppers  = [r[2] for r in sweep_results]
 
-fig, ax = plt.subplots(figsize=(10, 4))
-ax.plot(temp_range, sweep_preds, color='steelblue', linewidth=2)
-ax.fill_between(temp_range,
-                np.maximum(0, sweep_preds - uncertainty),
-                sweep_preds + uncertainty,
-                alpha=0.2, color='steelblue', label='±1σ prediction interval')
-ax.axvline(tmean, color='red', linestyle='--', label=f'Current input ({tmean}°C)')
-ax.set_xlabel('Mean Monthly Temperature (°C)')
-ax.set_ylabel('Predicted Rate (per 100,000)')
-ax.set_title('Predicted Suicide Rate vs Temperature — Predictive Only, NOT Causal')
-ax.legend()
-st.pyplot(fig)
+sweep_df = pd.DataFrame({
+    "Temperature (°C)": temp_sweep,
+    "Lower Bound":       lowers,
+    "Predicted Rate":    points,
+    "Upper Bound":       uppers,
+}).set_index("Temperature (°C)")
 
-# ── Model info footer ─────────────────────────────────────────
-with st.expander('Model Details'):
+st.line_chart(sweep_df, height=380)
+
+# Current temperature marker note
+st.info(
+    f"Your selected temperature **{temperature}°C** gives a predicted rate of "
+    f"**{point:.2f}** [{lower:.2f}, {upper:.2f}] per 100,000."
+)
+
+# ── Methodology note ──────────────────────────────────────────────────────────
+st.markdown("---")
+with st.expander("ℹ️ Methodology & Uncertainty"):
     st.markdown(f"""
-    | Metric | Linear Regression | **Random Forest** |
-    |---|---|---|
-    | CV R² | 0.0685 ± 0.0019 | **0.8409 ± 0.0124** |
-    | CV RMSE | 5.1720 ± 0.0843 | **2.1364 ± 0.0987** |
-    
-    - **Dataset:** U.S. County-Level Suicide Rates with Climate Data (1968–2004)  
-    - **N (modeled):** ~220,000 non-zero county-month observations  
-    - **Features:** Mean temperature, precipitation, month, year, population  
-    - **Limitation:** Model excludes CDC-suppressed counties (small populations)
-    """)
+**Model:** Random Forest Regressor  
+**Target:** Age-adjusted suicide rate per 100,000 population  
+**Features:** Mean monthly temperature (°C), monthly precipitation (mm), month (1–12), year (1968–2004), county population  
+**Performance:** CV R² = 0.84 · CV RMSE = {RMSE} ± 0.10  
+
+**Uncertainty bands** are ±1 RMSE ({RMSE} per 100,000) around the point estimate, representing
+the model's typical prediction error on held-out data. Lower bounds are clamped at 0 because
+negative rates are not meaningful. These bands reflect model uncertainty only and do not
+account for population-level or epistemic uncertainty in the underlying data.
+""")
