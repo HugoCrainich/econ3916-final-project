@@ -54,8 +54,9 @@ input_df = pd.DataFrame({
 prediction = model.predict(input_df)[0]
 prediction = max(0, prediction)  # rates can't be negative
 
-CV_RMSE      = 2.1398   # updated
-CV_RMSE_STD  = 0.0987   # keep the same from CVuncertainty  = CV_RMSE + CV_RMSE_STD  # conservative 1-sigma bound
+CV_RMSE      = 2.1398
+CV_RMSE_STD  = 0.0987
+uncertainty  = CV_RMSE + CV_RMSE_STD   # ← this line is probably missing
 
 lower = max(0, prediction - uncertainty)
 upper = prediction + uncertainty
