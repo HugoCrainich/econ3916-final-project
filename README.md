@@ -43,7 +43,7 @@ pip install seaborn              # Required for notebook EDA plots (not needed f
 
 ## How to Run the Notebook
 ```bash
-jupyter notebook 3916_Final_Project__5_.ipynb
+jupyter notebook 3916_Final_Project.ipynb
 ```
 Ensure `SuicideData_US.csv` is in the root directory. Run cells sequentially — Parts 0–5 must complete before the model is exported to `model.pkl` in Part 5.
 
